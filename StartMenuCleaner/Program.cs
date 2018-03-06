@@ -40,6 +40,12 @@ namespace StartMenuCleaner {
                             Console.WriteLine("Could not delete " + directory + ": " + e.Message);
                         }
                     }
+                    List<string> rootDeletionQueue = new List<string>();
+                    foreach (string filename in Directory.GetFiles(dir)) if (Path.GetExtension(filename).ToLower() == ".url" && args.Contains("/u")) rootDeletionQueue.Add(filename);
+                    foreach (string filename in rootDeletionQueue) {
+                        File.Delete(filename);
+                        Console.WriteLine("Deleted " + filename);
+                    }
                 }
             } catch(Exception e) {
                 Console.WriteLine("An unhandled exception occurred:\n" + e.ToString());
