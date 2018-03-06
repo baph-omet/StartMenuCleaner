@@ -29,7 +29,7 @@ namespace StartMenuCleaner {
                             File.Delete(filename);
                             Console.WriteLine("Moved " + filename + " out of folder.");
                             dirDeletionQueue.Add(directory);
-                        }
+                        } else if (Directory.GetFiles(directory).Length == 0) dirDeletionQueue.Add(directory);
                     }
                     foreach (string directory in dirDeletionQueue) {
                         if (Path.GetDirectoryName(directory).Contains("StartUp")) continue;
