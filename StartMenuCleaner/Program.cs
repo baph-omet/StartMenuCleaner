@@ -1,12 +1,12 @@
-﻿using System;
+﻿using Shell32;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Security.AccessControl;
-using Shell32;
 
 namespace StartMenuCleaner {
     class Program {
+        [STAThread]
         static void Main(string[] args) {
             bool deleteURLs = args.Contains("-u");
             try {
@@ -20,7 +20,7 @@ namespace StartMenuCleaner {
                     List<DirectoryInfo> dirDeletionQueue = new List<DirectoryInfo>();
                     foreach (string d in Directory.GetDirectories(dir)) {
                         DirectoryInfo directory = new DirectoryInfo(d);
-                        
+
                         // Check to see if folder is hidden
                         if (directory.Attributes.HasFlag(FileAttributes.Hidden)) {
                             Console.WriteLine(string.Format("Skipping hidden directory {0}", d));
@@ -28,26 +28,30 @@ namespace StartMenuCleaner {
                         }
 
                         // Check for write access
-                        if (!HasWriteAccess(d)) {
+                        if (!HasWriteAccessDirectory(d)) {
                             Console.WriteLine(string.Format("User does not have write access to directory {0}. Skipping.", d));
                             continue;
                         }
 
                         List<FileInfo> deletionQueue = new List<FileInfo>();
-                        
+
                         // Queue URL files for deletion
-                        if (deleteURLs) foreach (string filename in Directory.GetFiles(directory.FullName,"*.url")) deletionQueue.Add(new FileInfo(filename));
-                        
+                        if (deleteURLs) foreach (string filename in Directory.GetFiles(directory.FullName, "*.url")) deletionQueue.Add(new FileInfo(filename));
+
                         // Queue broken shortcuts for deletion
                         foreach (FileInfo f in directory.GetFiles()) {
                             Shell shell = new Shell();
                             Folder folder = shell.NameSpace(directory.FullName);
                             FolderItem fi = folder.ParseName(f.Name);
                             if (!fi.IsLink) continue;
-                            ShellLinkObject link = (ShellLinkObject)fi.GetLink;
-                            if (!File.Exists(link.Path)) {
-                                deletionQueue.Add(f);
-                                Console.WriteLine(string.Format("Detected broken shortcut {0} pointing to {1}", f.FullName, link.Path));
+                            try {
+                                ShellLinkObject link = (ShellLinkObject)fi.GetLink;
+                                if (!File.Exists(link.Path)) {
+                                    deletionQueue.Add(f);
+                                    Console.WriteLine(string.Format("Detected broken shortcut {0} pointing to {1}", f.FullName, link.Path));
+                                }
+                            } catch (UnauthorizedAccessException) {
+                                Console.WriteLine(string.Format("User does not have access to check validity of shortcut {0}. Skipping.", f.FullName));
                             }
                         }
 
@@ -59,7 +63,7 @@ namespace StartMenuCleaner {
                             } catch (IOException e) {
                                 Console.WriteLine(string.Format("Could not delete {0}: {1}", f.FullName, e.ToString()));
                             } catch (UnauthorizedAccessException) {
-                                Console.WriteLine(string.Format("User '{0}' does not have permission to delete {1}. Skipping.",Environment.UserName, f.FullName));
+                                Console.WriteLine(string.Format("User '{0}' does not have permission to delete {1}. Skipping.", Environment.UserName, f.FullName));
                             }
                         }
 
@@ -69,8 +73,8 @@ namespace StartMenuCleaner {
                             f.CopyTo(Path.Combine(dir, f.Name), true);
                             f.Delete();
                             Console.WriteLine(string.Format("Moved {0} out of folder.", f.FullName));
-                        } 
-                        
+                        }
+
                         // If directory is empty, queue it for deletion
                         if (directory.GetFiles().Length == 0) dirDeletionQueue.Add(directory);
                     }
@@ -89,21 +93,26 @@ namespace StartMenuCleaner {
                     }
 
                     List<string> rootDeletionQueue = new List<string>();
-                    
+
                     // Queue URL files in root for deletion
-                    if (deleteURLs) foreach (string filename in Directory.GetFiles(dir,"*.url")) rootDeletionQueue.Add(filename);
+                    if (deleteURLs) foreach (string filename in Directory.GetFiles(dir, "*.url")) rootDeletionQueue.Add(filename);
 
                     // Queue broken shortcuts in root for deletion
                     DirectoryInfo rootDirectory = new DirectoryInfo(dir);
                     foreach (FileInfo f in rootDirectory.GetFiles()) {
+                        if (!HasWriteAccessFile(f.FullName)) continue;
                         Shell shell = new Shell();
                         Folder folder = shell.NameSpace(rootDirectory.FullName);
                         FolderItem fi = folder.ParseName(f.Name);
                         if (!fi.IsLink) continue;
-                        ShellLinkObject link = (ShellLinkObject)fi.GetLink;
-                        if (!File.Exists(link.Path)) {
-                            rootDeletionQueue.Add(f.FullName);
-                            Console.WriteLine(string.Format("Detected broken shortcut {0} pointing to {1}", f.FullName, link.Path));
+                        try {
+                            ShellLinkObject link = (ShellLinkObject)fi.GetLink;
+                            if (!File.Exists(link.Path)) {
+                                rootDeletionQueue.Add(f.FullName);
+                                Console.WriteLine(string.Format("Detected broken shortcut {0} pointing to {1}", f.FullName, link.Path));
+                            }
+                        } catch (UnauthorizedAccessException) {
+                            Console.WriteLine(string.Format("User does not have access to check validity of shortcut {0}. Skipping.", f.FullName));
                         }
                     }
 
@@ -113,7 +122,7 @@ namespace StartMenuCleaner {
                         Console.WriteLine("Deleted " + filename);
                     }
                 }
-            } catch(Exception e) {
+            } catch (Exception e) {
                 Console.WriteLine("An unhandled exception occurred:");
                 Console.WriteLine(e.ToString());
             } finally {
@@ -122,9 +131,18 @@ namespace StartMenuCleaner {
             }
         }
 
-        private static bool HasWriteAccess(string path) {
+        private static bool HasWriteAccessDirectory(string path) {
             try {
                 Directory.GetAccessControl(path);
+                return true;
+            } catch (UnauthorizedAccessException) {
+                return false;
+            }
+        }
+
+        private static bool HasWriteAccessFile(string path) {
+            try {
+                File.GetAccessControl(path);
                 return true;
             } catch (UnauthorizedAccessException) {
                 return false;
