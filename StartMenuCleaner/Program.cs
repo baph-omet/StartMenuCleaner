@@ -3,11 +3,17 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Principal;
 
 namespace StartMenuCleaner {
     class Program {
         [STAThread]
         static void Main(string[] args) {
+            if (!HasAdminRights()) {
+                Console.WriteLine("This program requires administrator permissions since it needs to access Windows directories. Please re-launch as an administrator.");
+                return;
+            }
+
             bool deleteURLs = args.Contains("-u");
             try {
                 //Folders to check
@@ -147,6 +153,11 @@ namespace StartMenuCleaner {
             } catch (UnauthorizedAccessException) {
                 return false;
             }
+        }
+
+        private static bool HasAdminRights() {
+            using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+                return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
         }
     }
 }
