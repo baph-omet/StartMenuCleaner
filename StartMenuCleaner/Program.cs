@@ -2,8 +2,8 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Security.AccessControl;
+using Shell32;
 
 namespace StartMenuCleaner {
     class Program {
@@ -17,49 +17,97 @@ namespace StartMenuCleaner {
                 };
 
                 foreach (string dir in dirs) {
-                    List<string> dirDeletionQueue = new List<string>();
-                    foreach (string directory in Directory.GetDirectories(dir)) {
-                        List<string> deletionQueue = new List<string>();
+                    List<DirectoryInfo> dirDeletionQueue = new List<DirectoryInfo>();
+                    foreach (string d in Directory.GetDirectories(dir)) {
+                        DirectoryInfo directory = new DirectoryInfo(d);
                         
-                        if (deleteURLs) foreach (string filename in Directory.GetFiles(directory,"*.url")) deletionQueue.Add(filename);
+                        // Check to see if folder is hidden
+                        if (directory.Attributes.HasFlag(FileAttributes.Hidden)) {
+                            Console.WriteLine(string.Format("Skipping hidden directory {0}", d));
+                            continue;
+                        }
+
+                        // Check for write access
+                        if (!HasWriteAccess(d)) {
+                            Console.WriteLine(string.Format("User does not have write access to directory {0}. Skipping.", d));
+                            continue;
+                        }
+
+                        List<FileInfo> deletionQueue = new List<FileInfo>();
                         
-                        foreach (string filename in deletionQueue) {
-                            try {
-                                File.Delete(filename);
-                                Console.WriteLine("Deleted " + filename);
-                            } catch (IOException e) {
-                                Console.WriteLine(string.Format("Could not delete {0}: {1}", filename, e.ToString()));
-                            } catch (UnauthorizedAccessException) {
-                                Console.WriteLine(string.Format("User '{0}' does not have permission to delete {1}. Skipping.",Environment.UserName, filename));
+                        // Queue URL files for deletion
+                        if (deleteURLs) foreach (string filename in Directory.GetFiles(directory.FullName,"*.url")) deletionQueue.Add(new FileInfo(filename));
+                        
+                        // Queue broken shortcuts for deletion
+                        foreach (FileInfo f in directory.GetFiles()) {
+                            Shell shell = new Shell();
+                            Folder folder = shell.NameSpace(directory.FullName);
+                            FolderItem fi = folder.ParseName(f.Name);
+                            if (!fi.IsLink) continue;
+                            ShellLinkObject link = (ShellLinkObject)fi.GetLink;
+                            if (!File.Exists(link.Path)) {
+                                deletionQueue.Add(f);
+                                Console.WriteLine(string.Format("Detected broken shortcut {0} pointing to {1}", f.FullName, link.Path));
                             }
                         }
 
-                        if (Directory.GetFiles(directory).Length == 1) {
-                            string filename = Directory.GetFiles(directory)[0];
-                            if (Path.GetExtension(filename).ToLower() != ".lnk") continue;
-                            File.Copy(filename, Path.Combine(dir,Path.GetFileName(filename)), true);
-                            File.Delete(filename);
-                            Console.WriteLine(string.Format("Moved {0} out of folder.", filename));
-                            dirDeletionQueue.Add(directory);
-                        } else if (Directory.GetFiles(directory).Length == 0) dirDeletionQueue.Add(directory);
+                        // Delete marked files
+                        foreach (FileInfo f in deletionQueue) {
+                            try {
+                                f.Delete();
+                                Console.WriteLine("Deleted " + f.FullName);
+                            } catch (IOException e) {
+                                Console.WriteLine(string.Format("Could not delete {0}: {1}", f.FullName, e.ToString()));
+                            } catch (UnauthorizedAccessException) {
+                                Console.WriteLine(string.Format("User '{0}' does not have permission to delete {1}. Skipping.",Environment.UserName, f.FullName));
+                            }
+                        }
+
+                        // If folder only has one file in it, move that file out into the root
+                        if (directory.GetFiles().Length == 1) {
+                            FileInfo f = directory.GetFiles()[0];
+                            f.CopyTo(Path.Combine(dir, f.Name), true);
+                            f.Delete();
+                            Console.WriteLine(string.Format("Moved {0} out of folder.", f.FullName));
+                        } 
+                        
+                        // If directory is empty, queue it for deletion
+                        if (directory.GetFiles().Length == 0) dirDeletionQueue.Add(directory);
                     }
 
-                    foreach (string directory in dirDeletionQueue) {
-                        if (Path.GetDirectoryName(directory).Contains("StartUp")) continue;
+                    // Delete each queued directory
+                    foreach (DirectoryInfo directory in dirDeletionQueue) {
+                        if (directory.Name.Contains("StartUp")) continue;
                         try {
-                            Directory.Delete(directory, true);
-                            Console.WriteLine("Deleted " + directory);
+                            directory.Delete(true);
+                            Console.WriteLine("Deleted " + directory.FullName);
                         } catch (IOException e) {
-                            Console.WriteLine(string.Format("Could not delete {0}: {1}", directory, e.Message));
+                            Console.WriteLine(string.Format("Could not delete {0}: {1}", directory.FullName, e.Message));
                         } catch (UnauthorizedAccessException) {
-                            Console.WriteLine(string.Format("User '{0}' does not have permission to delete {1}. Skipping.", Environment.UserName, directory));
+                            Console.WriteLine(string.Format("User '{0}' does not have permission to delete {1}. Skipping.", Environment.UserName, directory.FullName));
                         }
                     }
 
                     List<string> rootDeletionQueue = new List<string>();
                     
+                    // Queue URL files in root for deletion
                     if (deleteURLs) foreach (string filename in Directory.GetFiles(dir,"*.url")) rootDeletionQueue.Add(filename);
-                    
+
+                    // Queue broken shortcuts in root for deletion
+                    DirectoryInfo rootDirectory = new DirectoryInfo(dir);
+                    foreach (FileInfo f in rootDirectory.GetFiles()) {
+                        Shell shell = new Shell();
+                        Folder folder = shell.NameSpace(rootDirectory.FullName);
+                        FolderItem fi = folder.ParseName(f.Name);
+                        if (!fi.IsLink) continue;
+                        ShellLinkObject link = (ShellLinkObject)fi.GetLink;
+                        if (!File.Exists(link.Path)) {
+                            rootDeletionQueue.Add(f.FullName);
+                            Console.WriteLine(string.Format("Detected broken shortcut {0} pointing to {1}", f.FullName, link.Path));
+                        }
+                    }
+
+                    // Delete queued files in root
                     foreach (string filename in rootDeletionQueue) {
                         File.Delete(filename);
                         Console.WriteLine("Deleted " + filename);
@@ -71,6 +119,15 @@ namespace StartMenuCleaner {
             } finally {
                 Console.WriteLine("Done!");
                 Console.Read();
+            }
+        }
+
+        private static bool HasWriteAccess(string path) {
+            try {
+                Directory.GetAccessControl(path);
+                return true;
+            } catch (UnauthorizedAccessException) {
+                return false;
             }
         }
     }
