@@ -6,3 +6,5 @@ I made this program because I was tired of all the clutter in my Start menu on W
 To run this program, simply download the lastest .exe (or compile it yourself in Visual Studio), and run it. If you want to also delete web links (`.url` files), run it from the command line and add the `-u` argument. The program does need admin rights in order to modify these folders, so you won't be able to run it if you don't have admin permissions.
 
 If you find any issues or have any suggestions, feel free to open an issue or submit a pull request.
+
+**Note:** Windows 7 is not currently supported as of v1.1.0.
